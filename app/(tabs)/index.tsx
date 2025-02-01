@@ -1,156 +1,11 @@
-import { StyleSheet, Animated, Pressable } from "react-native";
+import { StyleSheet, Animated, Pressable, Platform } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
-import { useState, useRef } from "react";
-
-export default function HomeScreen() {
-  const [followMode, setFollowMode] = useState(false);
-  const [currentDirection, setCurrentDirection] = useState<string | null>(null);
-
-  // Create animated values for each button
-  const upAnimation = useRef(new Animated.Value(1)).current;
-  const leftAnimation = useRef(new Animated.Value(1)).current;
-  const rightAnimation = useRef(new Animated.Value(1)).current;
-  const downAnimation = useRef(new Animated.Value(1)).current;
-
-  const animatePress = (animation: Animated.Value) => {
-    Animated.sequence([
-      Animated.timing(animation, {
-        toValue: 0.8,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(animation, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const createPressableButton = (
-    direction: string,
-    animation: Animated.Value
-  ) => (
-    <Animated.View style={{ transform: [{ scale: animation }] }}>
-      <Pressable
-        onPressIn={() => {
-          if (!followMode) {
-            animatePress(animation);
-            setCurrentDirection(
-              direction === "up"
-                ? "Forward"
-                : direction === "down"
-                ? "Backward"
-                : direction === "left"
-                ? "Turning Left"
-                : "Turning Right"
-            );
-          }
-        }}
-        onPressOut={() => setCurrentDirection(null)}
-        style={({ pressed }) => [
-          styles.button,
-          pressed && !followMode && styles.buttonPressed,
-          followMode && styles.buttonDisabled,
-        ]}
-        disabled={followMode}
-      >
-        <ThemedText
-          style={[styles.buttonText, followMode && styles.buttonTextDisabled]}
-        >
-          {direction === "up"
-            ? "▲"
-            : direction === "down"
-            ? "▼"
-            : direction === "left"
-            ? "◄"
-            : "►"}
-        </ThemedText>
-      </Pressable>
-    </Animated.View>
-  );
-
-  return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title" style={styles.title}>
-        Fairway Finder Remote
-      </ThemedText>
-
-      <ThemedView style={styles.gamepadContainer}>
-        {/* Connection lines */}
-        <ThemedView
-          style={[styles.connectionLine, styles.verticalLine, styles.topLine]}
-        />
-        <ThemedView
-          style={[
-            styles.connectionLine,
-            styles.verticalLine,
-            styles.bottomLine,
-          ]}
-        />
-        <ThemedView
-          style={[
-            styles.connectionLine,
-            styles.horizontalLine,
-            styles.leftLine,
-          ]}
-        />
-        <ThemedView
-          style={[
-            styles.connectionLine,
-            styles.horizontalLine,
-            styles.rightLine,
-          ]}
-        />
-
-        {/* Center hub */}
-        <ThemedView style={styles.centerHub} />
-
-        {followMode && (
-          <ThemedView style={styles.disabledOverlay}>
-            <ThemedText style={styles.disabledText}>
-              Manual control is disabled{"\n"}while follow mode is on
-            </ThemedText>
-          </ThemedView>
-        )}
-
-        <ThemedView style={styles.topRow}>
-          {createPressableButton("up", upAnimation)}
-        </ThemedView>
-
-        <ThemedView style={styles.middleRow}>
-          {createPressableButton("left", leftAnimation)}
-          {createPressableButton("right", rightAnimation)}
-        </ThemedView>
-
-        <ThemedView style={styles.bottomRow}>
-          {createPressableButton("down", downAnimation)}
-        </ThemedView>
-      </ThemedView>
-
-      {/* Direction indicator */}
-      <ThemedView style={styles.directionIndicator}>
-        <ThemedText style={styles.directionText}>
-          {currentDirection || "Stopped"}
-        </ThemedText>
-      </ThemedView>
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.followButton,
-          followMode && styles.followButtonActive,
-          pressed && styles.followButtonPressed,
-        ]}
-        onPress={() => setFollowMode(!followMode)}
-      >
-        <ThemedText style={styles.followButtonText}>
-          {followMode ? "Turn off follow mode" : "Turn on follow mode"}
-        </ThemedText>
-      </Pressable>
-    </ThemedView>
-  );
-}
+import { useState, useRef, useEffect } from "react";
+import BleManager from 'react-native-ble-manager';
+import type { Peripheral } from 'react-native-ble-manager';
+import { PermissionsAndroid } from 'react-native';
+import { NativeEventEmitter } from 'react-native';
 
 const styles = StyleSheet.create({
   container: {
@@ -369,4 +224,285 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
+  bluetoothSection: {
+    width: '100%',
+    marginBottom: 20,
+  },
+  scanButton: {
+    backgroundColor: '#2196F3',
+    padding: 15,
+    borderRadius: 25,
+    marginVertical: 10,
+    alignItems: 'center',
+  },
+  scanButtonPressed: {
+    backgroundColor: '#1976D2',
+  },
+  scanButtonActive: {
+    backgroundColor: '#4CAF50',
+  },
+  scanButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  deviceItem: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderColor: '#ddd',
+  },
+  connectedDevice: {
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: '#e3f2fd',
+    borderRadius: 8,
+  },
 });
+
+
+export default function HomeScreen() {
+  const [followMode, setFollowMode] = useState(false);
+  const [currentDirection, setCurrentDirection] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [connectedDevice, setConnectedDevice] = useState<Peripheral | null>(null);
+  const [devices, setDevices] = useState<Set<Peripheral>>(new Set());
+  const [services, setServices] = useState<Array<{uuid: string}>>([]);
+
+  // Create animated values for each button
+  const upAnimation = useRef(new Animated.Value(1)).current;
+  const leftAnimation = useRef(new Animated.Value(1)).current;
+  const rightAnimation = useRef(new Animated.Value(1)).current;
+  const downAnimation = useRef(new Animated.Value(1)).current;
+
+  const animatePress = (animation: Animated.Value) => {
+    Animated.sequence([
+      Animated.timing(animation, {
+        toValue: 0.8,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animation, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const createPressableButton = (
+    direction: string,
+    animation: Animated.Value
+  ) => (
+    <Animated.View style={{ transform: [{ scale: animation }] }}>
+      <Pressable
+        onPressIn={() => {
+          if (!followMode) {
+            animatePress(animation);
+            setCurrentDirection(
+              direction === "up"
+                ? "Forward"
+                : direction === "down"
+                ? "Backward"
+                : direction === "left"
+                ? "Turning Left"
+                : "Turning Right"
+            );
+          }
+        }}
+        onPressOut={() => setCurrentDirection(null)}
+        style={({ pressed }) => [
+          styles.button,
+          pressed && !followMode && styles.buttonPressed,
+          followMode && styles.buttonDisabled,
+        ]}
+        disabled={followMode}
+      >
+        <ThemedText
+          style={[styles.buttonText, followMode && styles.buttonTextDisabled]}
+        >
+          {direction === "up"
+            ? "▲"
+            : direction === "down"
+            ? "▼"
+            : direction === "left"
+            ? "◄"
+            : "►"}
+        </ThemedText>
+      </Pressable>
+    </Animated.View>
+  );
+
+  useEffect(() => {
+    BleManager.start({ showAlert: false })
+      .then(() => console.log('BLE Manager initialized'))
+      .catch(error => console.error('BLE init error', error));
+
+    // Use NativeEventEmitter with type assertion
+    const bleManagerEmitter = new NativeEventEmitter(BleManager as any);
+    
+    const stopScanListener = bleManagerEmitter.addListener('BleManagerStopScan', () => {
+      setIsScanning(false);
+    });
+
+    const disconnectListener = bleManagerEmitter.addListener('BleManagerDisconnect', () => {
+      setConnectedDevice(null);
+      setServices([]);
+    });
+
+    return () => {
+      stopScanListener.remove();
+      disconnectListener.remove();
+    };
+  }, []);
+
+  const handleScanResult = (device: any) => { // Consider defining proper Device type
+    setDevices(prev => new Set([...prev, device]));
+  };
+
+  const handleConnect = async (deviceId: string) => {
+    try {
+      await BleManager.connect(deviceId);
+      const connected = await BleManager.getConnectedPeripherals([]);
+      if (connected.length > 0) {
+        setConnectedDevice(connected[0]);
+        const discoveredServices = await BleManager.retrieveServices(deviceId);
+        setServices(discoveredServices.services || []);
+      }
+    } catch (error) {
+      console.error('Connection error', error);
+    }
+  };
+
+  const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
+      
+      return Object.values(granted).every(
+        status => status === PermissionsAndroid.RESULTS.GRANTED
+      );
+    }
+    return true; // iOS handles permissions differently
+  };
+
+  return (
+    <ThemedView style={styles.container}>
+      <ThemedText type="title" style={styles.title}>
+        Fairway Finder Remote
+      </ThemedText>
+
+      <ThemedView style={styles.gamepadContainer}>
+        {/* Connection lines */}
+        <ThemedView
+          style={[styles.connectionLine, styles.verticalLine, styles.topLine]}
+        />
+        <ThemedView
+          style={[
+            styles.connectionLine,
+            styles.verticalLine,
+            styles.bottomLine,
+          ]}
+        />
+        <ThemedView
+          style={[
+            styles.connectionLine,
+            styles.horizontalLine,
+            styles.leftLine,
+          ]}
+        />
+        <ThemedView
+          style={[
+            styles.connectionLine,
+            styles.horizontalLine,
+            styles.rightLine,
+          ]}
+        />
+
+        {/* Center hub */}
+        <ThemedView style={styles.centerHub} />
+
+        {followMode && (
+          <ThemedView style={styles.disabledOverlay}>
+            <ThemedText style={styles.disabledText}>
+              Manual control is disabled{"\n"}while follow mode is on
+            </ThemedText>
+          </ThemedView>
+        )}
+
+        <ThemedView style={styles.topRow}>
+          {createPressableButton("up", upAnimation)}
+        </ThemedView>
+
+        <ThemedView style={styles.middleRow}>
+          {createPressableButton("left", leftAnimation)}
+          {createPressableButton("right", rightAnimation)}
+        </ThemedView>
+
+        <ThemedView style={styles.bottomRow}>
+          {createPressableButton("down", downAnimation)}
+        </ThemedView>
+      </ThemedView>
+
+      {/* Direction indicator */}
+      <ThemedView style={styles.directionIndicator}>
+        <ThemedText style={styles.directionText}>
+          {currentDirection || "Stopped"}
+        </ThemedText>
+      </ThemedView>
+
+      <Pressable
+        style={({ pressed }) => [
+          styles.followButton,
+          followMode && styles.followButtonActive,
+          pressed && styles.followButtonPressed,
+        ]}
+        onPress={() => setFollowMode(!followMode)}
+      >
+        <ThemedText style={styles.followButtonText}>
+          {followMode ? "Turn off follow mode" : "Turn on follow mode"}
+        </ThemedText>
+      </Pressable>
+
+      <ThemedView style={styles.bluetoothSection}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.scanButton,
+            pressed && styles.scanButtonPressed,
+            isScanning && styles.scanButtonActive
+          ]}
+          onPress={async () => {
+            if (!isScanning) {
+              await requestPermissions();
+              setIsScanning(true);
+              BleManager.scan([], 5, true)
+                .then(() => console.log('Scan started'))
+                .catch(error => console.error('Scan error', error));
+            }
+          }}>
+          <ThemedText style={styles.scanButtonText}>
+            {isScanning ? 'Scanning...' : 'Scan for Devices'}
+          </ThemedText>
+        </Pressable>
+
+        {Array.from(devices).map(device => (
+          <Pressable
+            key={device.id}
+            style={styles.deviceItem}
+            onPress={() => handleConnect(device.id)}>
+            <ThemedText>{device.name || 'Unnamed Device'}</ThemedText>
+            <ThemedText>{device.id}</ThemedText>
+          </Pressable>
+        ))}
+
+        {connectedDevice && (
+          <ThemedView style={styles.connectedDevice}>
+            <ThemedText>Connected to: {connectedDevice.name}</ThemedText>
+            <ThemedText>Services: {services.length}</ThemedText>
+          </ThemedView>
+        )}
+      </ThemedView>
+    </ThemedView>
+  );
+}

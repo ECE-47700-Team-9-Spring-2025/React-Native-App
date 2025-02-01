@@ -5,17 +5,23 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "FairwayFinderApp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "We need Bluetooth access to connect to your device",
+        "NSBluetoothPeripheralUsageDescription": "We need Bluetooth access to maintain connection to your device"
+      },
+      "bundleIdentifier": "com.anonymous.FairwayFinderApp"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.anonymous.FairwayFinderApp"
     },
     "web": {
       "bundler": "metro",
